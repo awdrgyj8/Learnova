@@ -18,6 +18,7 @@ export default function ExamPage() {
   const router = useRouter();
   const { user } = useAuth();
   const [exam, setExam] = useState<Exam | null>(null);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
   const [isStarted, setIsStarted] = useState(false);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -25,6 +26,7 @@ export default function ExamPage() {
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [submittedScore, setSubmittedScore] = useState<number>(0);
   const [startTime, setStartTime] = useState<Date | null>(null);
 
   const examId = params?.id as string;
@@ -69,26 +71,29 @@ export default function ExamPage() {
         DATABASE_ID,
         QUESTIONS_COLLECTION_ID,
         [
-          Query.equal('examId', examId)
+          Query.equal('examId', examId),
+          Query.limit(100) // 增加限制以獲取所有題目
         ]
       );
       
-      // 将问题数据转换为前端期望的格式
-      const questions = questionsResponse.documents.map((doc: any) => ({
-        id: doc.$id,
+      // 将问题数据转换为前端期望的格式（考試進行中不包含正確答案）
+      const questionsData = questionsResponse.documents.map((doc: any) => ({
+        id: doc.$id, // 使用id字段而不是$id，確保答案狀態正確關聯
+        $id: doc.$id,
+        examId: doc.examId,
         question: doc.question,
         options: doc.options,
-        correctAnswers: doc.correctAnswers,
-        type: doc.type
+        type: doc.type,
+        order: doc.order || 0,
+        createdAt: doc.createdAt
       }));
       
-      // 组合考试数据和问题数据
-      const examWithQuestions = {
-        ...examData,
-        questions: questions
-      };
+      // 按順序排序問題
+      questionsData.sort((a, b) => a.order - b.order);
       
-      setExam(examWithQuestions as Exam);
+      // 分別設置考試和問題狀態
+      setExam(examData as Exam);
+      setQuestions(questionsData);
     } catch (error) {
       console.error('獲取考試失敗:', error);
       router.push('/');
@@ -146,15 +151,45 @@ export default function ExamPage() {
     setIsSubmitting(true);
     
     try {
+      // 重新獲取包含正確答案的題目數據來計算分數
+      const questionsWithAnswers = await databases.listDocuments(
+        DATABASE_ID,
+        QUESTIONS_COLLECTION_ID,
+        [
+          Query.equal('examId', examId),
+          Query.limit(100)
+        ]
+      );
+      
+      const questionsForScoring = questionsWithAnswers.documents.map((doc: any) => ({
+        id: doc.$id, // 確保id字段一致
+        question: doc.question,
+        options: doc.options,
+        type: doc.type,
+        correctAnswers: doc.correctAnswers
+      }));
+      
       const endTime = new Date();
       const timeSpent = Math.floor((endTime.getTime() - startTime.getTime()) / 1000);
-      const score = calculateScore(exam.questions, answers);
+      const score = calculateScore(questionsForScoring, answers);
+      
+      // 壓縮答案格式以符合1000字符限制
+      const compactAnswers: Record<string, number[]> = {};
+      Object.entries(answers).forEach(([questionId, answerArray]) => {
+        if (answerArray && answerArray.length > 0) {
+          // 只保存有答案的題目，使用題目索引而不是完整ID
+          const questionIndex = questions.findIndex(q => q.id === questionId);
+          if (questionIndex !== -1) {
+            compactAnswers[questionIndex.toString()] = answerArray;
+          }
+        }
+      });
       
       const submissionData: Omit<Submission, '$id' | '$createdAt' | '$updatedAt'> = {
         examId: exam.$id,
         userId: user.$id,
         userName: user.name,
-        answers: JSON.stringify(answers),
+        answers: JSON.stringify(compactAnswers),
         score,
         timeSpent,
         completedAt: endTime.toISOString(),
@@ -167,6 +202,7 @@ export default function ExamPage() {
         submissionData
       );
       
+      setSubmittedScore(score);
       setHasSubmitted(true);
     } catch (error) {
       console.error('提交考試失敗:', error);
@@ -215,7 +251,7 @@ export default function ExamPage() {
   }
 
   if (hasSubmitted) {
-    const score = calculateScore(exam.questions, answers);
+    const score = submittedScore;
     const timeSpent = startTime ? Math.floor((new Date().getTime() - startTime.getTime()) / 1000) : 0;
     
     return (
@@ -315,7 +351,7 @@ export default function ExamPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
               <div className="flex items-center text-gray-600 dark:text-gray-300">
                 <BookOpen className="mr-2 h-5 w-5" />
-                <span>{exam.totalQuestions} 道題目</span>
+                <span>{questions.length} 道題目</span>
               </div>
               
               {exam.timeLimit && (
@@ -377,8 +413,8 @@ export default function ExamPage() {
     );
   }
 
-  const currentQuestion = exam.questions[currentQuestionIndex];
-  const progress = ((currentQuestionIndex + 1) / exam.totalQuestions) * 100;
+  const currentQuestion = questions[currentQuestionIndex];
+  const progress = ((currentQuestionIndex + 1) / questions.length) * 100;
   const answeredCount = getAnsweredQuestionsCount();
 
   return (
@@ -392,7 +428,7 @@ export default function ExamPage() {
                 {exam.title}
               </h1>
               <p className="text-sm text-gray-600 dark:text-gray-300">
-                題目 {currentQuestionIndex + 1} / {exam.totalQuestions}
+                題目 {currentQuestionIndex + 1} / {questions.length}
               </p>
             </div>
             
@@ -409,7 +445,7 @@ export default function ExamPage() {
               )}
               
               <div className="text-sm text-gray-600 dark:text-gray-300">
-                已答：{answeredCount}/{exam.totalQuestions}
+                已答：{answeredCount}/{questions.length}
               </div>
             </div>
           </div>
@@ -515,7 +551,7 @@ export default function ExamPage() {
           </button>
           
           <div className="flex space-x-4">
-            {currentQuestionIndex === exam.totalQuestions - 1 ? (
+            {currentQuestionIndex === questions.length - 1 ? (
               <button
                 onClick={() => handleSubmit()}
                 disabled={isSubmitting}
@@ -530,7 +566,7 @@ export default function ExamPage() {
               </button>
             ) : (
               <button
-                onClick={() => setCurrentQuestionIndex(Math.min(exam.totalQuestions - 1, currentQuestionIndex + 1))}
+                onClick={() => setCurrentQuestionIndex(Math.min(questions.length - 1, currentQuestionIndex + 1))}
                 className="inline-flex items-center px-4 py-2 border border-transparent text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
               >
                 下一題

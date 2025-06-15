@@ -4,10 +4,10 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Plus, BookOpen, Clock, Users, Trophy, Edit, Trash2, Eye } from 'lucide-react';
+import { Plus, BookOpen, Clock, Users, Trophy, Edit, Trash2, Eye, X, CheckCircle, XCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { databases, DATABASE_ID, EXAMS_COLLECTION_ID, QUESTIONS_COLLECTION_ID, SUBMISSIONS_COLLECTION_ID, Query } from '@/lib/appwrite';
-import { Exam, Submission } from '@/types';
+import { Exam, Submission, Question } from '@/types';
 import { formatDate } from '@/lib/utils';
 
 export default function DashboardPage() {
@@ -17,6 +17,10 @@ export default function DashboardPage() {
   const [mySubmissions, setMySubmissions] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'exams' | 'submissions'>('exams');
+  const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null);
+  const [submissionQuestions, setSubmissionQuestions] = useState<Question[]>([]);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -85,6 +89,33 @@ export default function DashboardPage() {
       console.error('刪除考試失敗:', error);
       alert('刪除失敗，請稍後再試');
     }
+  };
+
+  const viewSubmissionDetails = async (submission: Submission) => {
+    setLoadingDetails(true);
+    setSelectedSubmission(submission);
+    setShowDetailModal(true);
+
+    try {
+      // 獲取考試的所有問題
+      const questionsResponse = await databases.listDocuments(
+        DATABASE_ID,
+        QUESTIONS_COLLECTION_ID,
+        [Query.equal('examId', submission.examId)]
+      );
+      setSubmissionQuestions(questionsResponse.documents as Question[]);
+    } catch (error) {
+      console.error('獲取問題詳情失敗:', error);
+      alert('獲取詳情失敗，請稍後再試');
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
+
+  const closeDetailModal = () => {
+    setShowDetailModal(false);
+    setSelectedSubmission(null);
+    setSubmissionQuestions([]);
   };
 
   if (authLoading || loading) {
@@ -362,21 +393,30 @@ export default function DashboardPage() {
                               </span>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <div className={`text-2xl font-bold ${
-                              submission.score >= 80 ? 'text-green-600 dark:text-green-400' :
-                              submission.score >= 60 ? 'text-yellow-600 dark:text-yellow-400' :
-                              'text-red-600 dark:text-red-400'
-                            }`}>
-                              {submission.score}分
-                            </div>
-                            <div className={`text-sm ${
-                              submission.score >= 80 ? 'text-green-600 dark:text-green-400' :
-                              submission.score >= 60 ? 'text-yellow-600 dark:text-yellow-400' :
-                              'text-red-600 dark:text-red-400'
-                            }`}>
-                              {submission.score >= 80 ? '優秀' :
-                               submission.score >= 60 ? '及格' : '不及格'}
+                          <div className="flex items-center space-x-4">
+                            <button
+                              onClick={() => viewSubmissionDetails(submission)}
+                              className="flex items-center px-3 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
+                            >
+                              <Eye className="mr-1 h-4 w-4" />
+                              查看詳情
+                            </button>
+                            <div className="text-right">
+                              <div className={`text-2xl font-bold ${
+                                submission.score >= 80 ? 'text-green-600 dark:text-green-400' :
+                                submission.score >= 60 ? 'text-yellow-600 dark:text-yellow-400' :
+                                'text-red-600 dark:text-red-400'
+                              }`}>
+                                {submission.score}分
+                              </div>
+                              <div className={`text-sm ${
+                                submission.score >= 80 ? 'text-green-600 dark:text-green-400' :
+                                submission.score >= 60 ? 'text-yellow-600 dark:text-yellow-400' :
+                                'text-red-600 dark:text-red-400'
+                              }`}>
+                                {submission.score >= 80 ? '優秀' :
+                                 submission.score >= 60 ? '及格' : '不及格'}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -389,6 +429,161 @@ export default function DashboardPage() {
           )}
         </motion.div>
       </div>
+
+      {/* 詳情模態框 */}
+      {showDetailModal && selectedSubmission && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden"
+          >
+            <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                考試詳情 - {selectedSubmission.examId}
+              </h2>
+              <button
+                onClick={closeDetailModal}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                <X className="h-5 w-5 text-gray-500 dark:text-gray-400" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
+              {loadingDetails ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* 考試總結 */}
+                  <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                      <div>
+                        <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                          {selectedSubmission.score}
+                        </div>
+                        <div className="text-sm text-gray-600 dark:text-gray-300">總分</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                          {(() => {
+                            if (!selectedSubmission.answers) return 0;
+                            const userAnswers = JSON.parse(selectedSubmission.answers);
+                            return submissionQuestions.filter((q, index) => {
+                              // 支持新舊格式：先嘗試使用索引，再嘗試使用完整ID
+                              const userAnswer = userAnswers[index.toString()] || userAnswers[q.$id];
+                              return userAnswer && userAnswer.length > 0 && userAnswer[0] === q.correctAnswer;
+                            }).length;
+                          })()}
+                        </div>
+                        <div className="text-sm text-gray-600 dark:text-gray-300">答對題數</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl font-bold text-red-600 dark:text-red-400">
+                          {(() => {
+                            if (!selectedSubmission.answers) return submissionQuestions.length;
+                            const userAnswers = JSON.parse(selectedSubmission.answers);
+                            return submissionQuestions.filter((q, index) => {
+                              // 支持新舊格式：先嘗試使用索引，再嘗試使用完整ID
+                              const userAnswer = userAnswers[index.toString()] || userAnswers[q.$id];
+                              return !userAnswer || userAnswer.length === 0 || userAnswer[0] !== q.correctAnswer;
+                            }).length;
+                          })()}
+                        </div>
+                        <div className="text-sm text-gray-600 dark:text-gray-300">答錯題數</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl font-bold text-gray-600 dark:text-gray-300">
+                          {Math.floor(selectedSubmission.timeSpent / 60)}:{(selectedSubmission.timeSpent % 60).toString().padStart(2, '0')}
+                        </div>
+                        <div className="text-sm text-gray-600 dark:text-gray-300">用時</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 題目詳情 */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                      答題詳情
+                    </h3>
+                    {submissionQuestions.map((question, index) => {
+                      const userAnswers = selectedSubmission.answers ? JSON.parse(selectedSubmission.answers) : {};
+                      // 支持新舊格式：先嘗試使用索引，再嘗試使用完整ID
+                      const userAnswer = userAnswers[index.toString()] || userAnswers[question.$id];
+                      const isCorrect = userAnswer && userAnswer.length > 0 && userAnswer[0] === question.correctAnswer;
+                      
+                      return (
+                        <div key={question.$id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                          <div className="flex items-start space-x-3">
+                            <div className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${
+                              isCorrect ? 'bg-green-100 dark:bg-green-900' : 'bg-red-100 dark:bg-red-900'
+                            }`}>
+                              {isCorrect ? (
+                                <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400" />
+                              ) : (
+                                <XCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                              )}
+                            </div>
+                            <div className="flex-1">
+                              <h4 className="font-medium text-gray-900 dark:text-white mb-2">
+                                第 {index + 1} 題: {question.question}
+                              </h4>
+                              <div className="space-y-2">
+                                {question.options.map((option, optionIndex) => {
+                                  const isUserChoice = userAnswer && userAnswer.includes(optionIndex);
+                                  const isCorrectOption = optionIndex === question.correctAnswer;
+                                  
+                                  return (
+                                    <div key={optionIndex} className={`p-2 rounded border ${
+                                      isCorrectOption ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' :
+                                      isUserChoice ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' :
+                                      'bg-gray-50 dark:bg-gray-700 border-gray-200 dark:border-gray-600'
+                                    }`}>
+                                      <div className="flex items-center space-x-2">
+                                        <span className={`text-sm font-medium ${
+                                          isCorrectOption ? 'text-green-700 dark:text-green-300' :
+                                          isUserChoice ? 'text-red-700 dark:text-red-300' :
+                                          'text-gray-700 dark:text-gray-300'
+                                        }`}>
+                                          {String.fromCharCode(65 + optionIndex)}.
+                                        </span>
+                                        <span className={`${
+                                          isCorrectOption ? 'text-green-700 dark:text-green-300' :
+                                          isUserChoice ? 'text-red-700 dark:text-red-300' :
+                                          'text-gray-700 dark:text-gray-300'
+                                        }`}>
+                                          {option}
+                                        </span>
+                                        {isCorrectOption && (
+                                          <span className="text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 px-2 py-1 rounded">
+                                            正確答案
+                                          </span>
+                                        )}
+                                        {isUserChoice && !isCorrectOption && (
+                                          <span className="text-xs bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 px-2 py-1 rounded">
+                                            你的選擇
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

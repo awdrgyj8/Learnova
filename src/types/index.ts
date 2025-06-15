@@ -7,6 +7,7 @@ export interface User {
 }
 
 export interface Question {
+  id: string; // 添加id字段用於答案狀態關聯
   $id: string;
   examId: string;
   type: 'single' | 'multiple';
